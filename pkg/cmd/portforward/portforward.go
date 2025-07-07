@@ -446,7 +446,6 @@ func (o PortForwardOptions) RunPortForwardContext(ctx context.Context) error {
 		}
 	}()
 
-	// Start watcher to monitor pod status
 	go func() {
 		for {
 			select {
