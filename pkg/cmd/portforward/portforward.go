@@ -446,6 +446,49 @@ func (o PortForwardOptions) RunPortForwardContext(ctx context.Context) error {
 		}
 	}()
 
+	// Start watcher to monitor pod status
+	go func() {
+		for {
+			select {
+			case <-returnCtx.Done():
+				return
+			default:
+			}
+
+			watcher, err := o.PodClient.Pods(o.Namespace).Watch(returnCtx, metav1.ListOptions{
+				FieldSelector: fmt.Sprintf("metadata.name=%s", o.PodName),
+			})
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "error starting pod watcher: %v\n", err)
+				time.Sleep(2 * time.Second)
+				continue
+			}
+
+			for event := range watcher.ResultChan() {
+				select {
+				case <-returnCtx.Done():
+					watcher.Stop()
+					return
+				default:
+				}
+
+				p, ok := event.Object.(*corev1.Pod)
+				if !ok {
+					continue
+				}
+				if p.Status.Phase != corev1.PodRunning {
+					fmt.Fprintf(os.Stderr, "pod is no longer running (status=%v); stopping port-forward\n", p.Status.Phase)
+					watcher.Stop()
+					returnCtxCancel()
+					return
+				}
+			}
+
+			fmt.Fprintln(os.Stderr, "pod watcher channel closed; retrying...")
+			time.Sleep(1 * time.Second)
+		}
+	}()
+
 	req := o.RESTClient.Post().
 		Resource("pods").
 		Namespace(o.Namespace).
